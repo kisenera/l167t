@@ -7,21 +7,74 @@ const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true })
 
 
 const subjects = [
-  { name: 'Topic 1', id: 1 },
-  { name: 'Topic 2', id: 2 },
-  // ... add other topics up to Topic 12
+  { name: 'Linear/Logistic Regression', id: 1 },
+  { name: 'Gradient Descent', id: 2 },
+  { name: 'Multilayer Perceptrons', id: 3 },
+  { name: 'Word2Vec', id: 4 },
+  { name: 'Autoregressive Models', id: 5 },
+  { name: 'Attention', id: 6 },
+  { name: 'Transformers', id: 7 },
+  { name: 'Autoregressive Language Modeling', id: 8 },
 ];
+const assistantMapping = {
+  'Linear/Logistic Regression': 'asst_QOPUJxYnQdlmW1PECYreaZ99',
+  'Gradient Descent': 'asst_Z018VWT8Ubg3L8JEbES14md8',
+  'Multilayer Perceptrons': 'asst_NRT58rTT7gWxrayRunfmWrGQ',
+  'Word2Vec': 'asst_v3x6vXPQsGcofF0TdI1QVtol',
+  'Autoregressive Models': 'asst_mPPmc5pxHSPTNJvZ9hMHnlMu',
+  'Attention': 'asst_b42bnuBLNEazTACNbHi0ZMzn',
+  'Transformers': 'asst_sR6dZLes5uL4jQIaE4IhbgeF',
+  'Autoregressive Language Modeling': 'asst_SDxyI1nc874hlhXjyMeI6ngD'
+};
 
+function formatNoteContent(note) {
+  // Replace line breaks with <br> tags
+  return note.replace(/\n/g, '<br>');
+}
+
+function Notes({ notes }) {
+  useEffect(() => {
+    if (window.MathJax) {
+      window.MathJax.typesetPromise();
+    }
+  }, [notes]); // Re-run the effect when notes change
+
+  return (
+    <div className="Notes">
+      {notes.map((note, index) => (
+        <div key={index} className="Note" dangerouslySetInnerHTML={{ __html: formatNoteContent(note) }} />
+      ))}
+    </div>
+  );
+}
 function App() {
   const [selectedTopic, setSelectedTopic] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
-
-
+  const [notes, setNotes] = useState([]);
+  const [showNotes, setShowNotes] = useState(false); // Add this line
+  const addNote = (message) => {
+    setNotes((prevNotes) => [...prevNotes, message]);
+  };
   return (
     <div className="App">
-      <div className="TitleHeader">AI Tutor</div>
+      <h1 className="MainTitle">LIGN 167 Office Hours</h1>
+      <div class="small-space"></div>
+      {/* Render "Choose topic" only when no topic is selected */}
+      {!selectedTopic && <div className="TitleHeader">Choose topic</div>}
+      {!selectedTopic && (
+        <button onClick={() => setShowNotes(!showNotes)} className="NotesButton">
+          {showNotes ? 'Hide Notes' : 'Show Notes'}
+        </button>
+      )}
+
+      {showNotes && <Notes notes={notes} />}
+
       {selectedTopic ? (
-        <TopicHub topic={selectedTopic} backToMenu={() => setSelectedTopic(null)} />
+        <TopicHub
+          topic={selectedTopic}
+          backToMenu={() => setSelectedTopic(null)}
+          addNote={addNote} // Pass addNote as a prop
+        />
       ) : (
         <div className="Menu">
           {subjects.map((subject) => (
@@ -35,7 +88,7 @@ function App() {
   );
 }
 
-function TopicHub({ topic, backToMenu }) {
+function TopicHub({ topic, backToMenu, addNote }) {
   const [chat, setChat] = useState([]);
   const [userInput, setUserInput] = useState('');
   const [assistantId, setAssistantId] = useState(null);
@@ -46,8 +99,18 @@ function TopicHub({ topic, backToMenu }) {
     messageEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
   useEffect(() => {
+
     const createAssistant = async () => {
-      const assistant = await openai.beta.assistants.retrieve('asst_R9nY3R5aZoMmwzGAPhOcA520')
+      if (!topic) return;
+      
+      // Use the topic name to get the corresponding assistant ID from the mapping
+      const assistantIdForTopic = assistantMapping[topic.name];
+      if (!assistantIdForTopic) {
+        console.error('Assistant ID for the topic not found');
+        return;
+      }
+      
+      const assistant = await openai.beta.assistants.retrieve(assistantIdForTopic);
       setAssistantId(assistant.id);
 
       const thread = await openai.beta.threads.create();
@@ -56,7 +119,16 @@ function TopicHub({ topic, backToMenu }) {
 
     createAssistant();
   }, []);
-
+  useEffect(() => {
+    // Use a microtask to delay typesetting until after the DOM has updated
+    queueMicrotask(() => {
+      if (window.MathJax) {
+        window.MathJax.typesetPromise().then(() => {
+          // Typeset is done
+        }).catch((err) => console.error('MathJax typesetPromise failed:', err));
+      }
+    });
+  }, [chat]);
   const handleSendMessage = async () => {
     if (!userInput.trim()) return;
     const userMessage = { role: 'user', content: userInput };
@@ -67,9 +139,12 @@ function TopicHub({ topic, backToMenu }) {
       content: userInput
     });
 
+    // Update the instructions with dynamic topic name
+    const instructions = `You are speaking to a student at office hours, regarding ${topic.name}. Speak in a friendly, educated and intuitive manner. Give concise, relevant responses.`;
+
     const run = await openai.beta.threads.runs.create(threadId, {
       assistant_id: assistantId,
-      instructions: "Please address the user as Jane Doe. The user has a premium account."
+      instructions: instructions
     });
 
     await checkRunStatus(run.id);
@@ -79,11 +154,19 @@ function TopicHub({ topic, backToMenu }) {
   const checkRunStatus = async (runId) => {
     let run = await openai.beta.threads.runs.retrieve(threadId, runId);
     while (run.status !== 'completed') {
+      console.log(run.status);
+      if (run.status === 'failed') {
+        // Handle the failed status by breaking the loop and adding an error message to the chat
+        const errorMessage = { role: 'ai', content: 'Error: The assistant has encountered an issue.' };
+        setChat(prevChat => [...prevChat, errorMessage]);
+        return; // Exit the function early
+      }
       await new Promise(resolve => setTimeout(resolve, 1000));
       run = await openai.beta.threads.runs.retrieve(threadId, runId);
     }
     getAssistantResponse();
   };
+
 
   const getAssistantResponse = async () => {
     const response = await openai.beta.threads.messages.list(threadId);
@@ -114,6 +197,9 @@ function TopicHub({ topic, backToMenu }) {
         {chat.map((message, index) => (
           <div key={index} className={`ChatMessage ${message.role}`}>
             {message.content}
+            {message.role === 'ai' && (
+              <button onClick={() => addNote(message.content)} className="NoteButton">+</button>
+            )}
           </div>
         ))}
         <div ref={messageEndRef} />
